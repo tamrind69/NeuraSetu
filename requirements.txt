@@ -27,3 +27,37 @@ sqlmodel==0.0.22
 python-dotenv==1.0.1
 requests==2.32.3
 
+# NeuraSetu — AI Teacher RAG Pipeline
+# =====================================
+# Install all dependencies with:
+#   pip install -r requirements.txt
+
+# --- Core LangChain ---
+langchain>=0.2.0
+langchain-community>=0.2.0
+langchain-text-splitters>=0.2.0
+
+# --- Document Parsing ---
+pypdf>=4.0.0
+python-docx>=1.1.0
+python-pptx>=0.6.23
+
+# --- Vector Store ---
+chromadb>=0.5.0
+
+# --- Embeddings (HuggingFace free tier — no API key needed) ---
+sentence-transformers>=3.0.0
+huggingface-hub>=0.24.0
+
+# --- Sparse Indexing ---
+rank-bm25>=0.2.2
+
+# --- Re-ranking ---
+flashrank>=0.2.0
+
+# --- Schema / Validation ---
+pydantic>=2.0.0
+
+# --- Utilities ---
+python-dotenv>=1.0.0
+numpy>=1.26.0
