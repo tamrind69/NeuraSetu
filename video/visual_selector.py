@@ -21,6 +21,39 @@ import textwrap
 from ai_teacher.llm_client import chat_json
 from ai_teacher.prompts import VISUAL_SELECTOR_SYSTEM, visual_selector_prompt
 
+VISUAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "visual_type": {
+            "type": "string",
+            "enum": [
+                "circuit_diagram",
+                "graph",
+                "equation",
+                "timeline",
+                "labeled_diagram",
+                "code",
+                "flow_diagram",
+                "plain_text"
+            ]
+        },
+        "reason": {
+            "type": "string"
+        },
+        "elements": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        }
+    },
+    "required": [
+        "visual_type",
+        "reason",
+        "elements"
+    ]
+}
+
 SLIDE_SIZE = (960, 540)
 BG = (255, 255, 255)
 INK = (30, 30, 40)
@@ -29,7 +62,12 @@ ACCENT = (40, 100, 200)
 
 def select_visual(subject: str, concept: str, text_to_illustrate: str) -> dict:
     prompt = visual_selector_prompt(subject, concept, text_to_illustrate)
-    result = chat_json(VISUAL_SELECTOR_SYSTEM, prompt, max_tokens=300)
+    result = chat_json(
+    VISUAL_SELECTOR_SYSTEM,
+    prompt,
+    max_tokens=800,
+    response_schema=VISUAL_SCHEMA
+)
     result.setdefault("visual_type", "plain_text")
     result.setdefault("elements", [])
     result.setdefault("reason", "")

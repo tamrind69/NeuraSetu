@@ -25,36 +25,108 @@ from typing import Any
 
 from ai_teacher.llm.provider import generate, generate_json
 
-_JSON_FENCE = re.compile(r"^```(?:json)?|```$", re.MULTILINE)
 
-
-def chat(system: str, user: str, max_tokens: int = 1200, temperature: float = 0.4) -> str:
+def chat(
+    system: str,
+    user: str,
+    max_tokens: int = 1200,
+    temperature: float = 0.4
+) -> str:
     """Plain text completion."""
-    return generate(system, user, max_tokens=max_tokens, temperature=temperature)
+    return generate(
+        system,
+        user,
+        max_tokens=max_tokens,
+        temperature=temperature
+    )
 
 
-def chat_json(system: str, user: str, max_tokens: int = 1200, temperature: float = 0.2) -> Any:
-    """
-    Completion that is expected to return ONLY a JSON object/array.
-    Uses the active provider's native JSON mode where available
-    (Gemini), and defensively strips markdown fences either way in
-    case a provider (e.g. Ollama) ignores the instruction.
-    """
-    system_with_instruction = system + "\n\nRespond with ONLY valid JSON. No prose, no markdown fences."
-    raw = generate_json(system_with_instruction, user, max_tokens=max_tokens, temperature=temperature)
-    cleaned = _JSON_FENCE.sub("", raw).strip()
+def chat_json(
+    system: str,
+    user: str,
+    max_tokens: int = 1200,
+    temperature: float = 0.2,
+    response_schema=None,
+) -> Any:
+    system_with_instruction = system + """
+
+IMPORTANT:
+Return ONLY one valid JSON object or JSON array.
+Do NOT explain your answer.
+Do NOT include markdown.
+Do NOT include ```json or ``` fences.
+Do NOT write anything before or after the JSON.
+"""
+
+    raw = generate_json(
+        system_with_instruction,
+        user,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        response_schema=response_schema,
+    )
+
+    def parse_json(text: str) -> Any:
+        text = text.strip()
+
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+            text = text.strip()
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        start = text.find("{")
+        end = text.rfind("}")
+
+        if start != -1 and end != -1 and end > start:
+            candidate = text[start:end + 1]
+            return json.loads(candidate)
+
+        start = text.find("[")
+        end = text.rfind("]")
+
+        if start != -1 and end != -1 and end > start:
+            candidate = text[start:end + 1]
+            return json.loads(candidate)
+
+        raise json.JSONDecodeError(
+            "No valid JSON found",
+            text,
+            0,
+        )
+
     try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        # one retry with an explicit correction nudge
+        return parse_json(raw)
+
+    except json.JSONDecodeError as first_error:
+
+        retry_user = user + """
+
+CRITICAL CORRECTION:
+Your previous response was invalid.
+Return ONLY valid JSON.
+The response must begin with { or [ and end with } or ].
+There must be absolutely NO text outside the JSON.
+"""
+
         raw2 = generate_json(
             system_with_instruction,
-            user + "\n\nYour previous reply was not valid JSON. Return ONLY valid JSON.",
+            retry_user,
             max_tokens=max_tokens,
             temperature=0.0,
+            response_schema=response_schema,
         )
-        cleaned2 = _JSON_FENCE.sub("", raw2).strip()
+
         try:
-            return json.loads(cleaned2)
+            return parse_json(raw2)
+
         except json.JSONDecodeError:
-            raise ValueError(f"Model did not return valid JSON: {raw[:300]}") from e
+            raise ValueError(
+                f"Model did not return valid JSON.\n"
+                f"First response:\n{raw[:500]}\n\n"
+                f"Retry response:\n{raw2[:500]}"
+            ) from first_error

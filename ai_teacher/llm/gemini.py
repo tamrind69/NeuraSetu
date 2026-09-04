@@ -19,8 +19,11 @@ put the key in frontend code - it is only ever read here, server-side.
 from __future__ import annotations
 
 import os
+from dotenv import load_dotenv
 
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+load_dotenv()
+
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
 
 def _client():
@@ -59,27 +62,39 @@ def generate_with_gemini(
 
 
 def generate_json_with_gemini(
-    system: str, user: str, max_tokens: int = 1200, temperature: float = 0.2
+    system: str,
+    user: str,
+    max_tokens: int = 1200,
+    temperature: float = 0.2,
+    response_schema=None,
 ) -> str:
     """
-    JSON-mode completion via the Gemini API's native response_mime_type,
-    which is materially more reliable than asking a model to "please
-    return only JSON" in the prompt. Returns the raw JSON string (the
-    caller still runs it through json.loads).
+    Generate JSON using Gemini's native structured-output mode.
     """
+
     from google.genai import types
 
     client = _client()
+
+    config_kwargs = {
+        "system_instruction": system,
+        "max_output_tokens": max_tokens,
+        "temperature": temperature,
+        "response_mime_type": "application/json",
+    }
+
+    if response_schema is not None:
+        config_kwargs["response_schema"] = response_schema
+
     response = client.models.generate_content(
         model=MODEL,
         contents=user,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=max_tokens,
-            temperature=temperature,
-            response_mime_type="application/json",
-        ),
+        config=types.GenerateContentConfig(**config_kwargs),
     )
+
     if not response.text:
-        raise RuntimeError("Gemini returned no text for a JSON-mode request.")
+        raise RuntimeError(
+            "Gemini returned no text for a JSON-mode request."
+        )
+
     return response.text

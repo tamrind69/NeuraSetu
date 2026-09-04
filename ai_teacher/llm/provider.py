@@ -1,46 +1,140 @@
 """
 ai_teacher/llm/provider.py
 
-The one switchboard every other module talks to. Nothing outside
-ai_teacher/llm/ should import gemini.py or ollama.py directly - that
-way adding a third provider later (or changing the fallback order)
-is a one-file change.
+Central LLM switchboard.
 
-    LLM_PROVIDER=gemini (default) -> try Gemini first, fall back to
-    Ollama if the Gemini call raises for any reason (no key, network
-    blip, rate limit, safety block, etc.) so a demo never goes fully
-    dark mid-session.
-
-    LLM_PROVIDER=ollama -> use Ollama only (useful offline / while
-    iterating without burning API quota).
+Gemini is the primary provider.
+Ollama is an optional fallback when explicitly enabled.
 """
+
 from __future__ import annotations
 
 import os
 
-from .gemini import generate_json_with_gemini, generate_with_gemini
+from .gemini import (
+    generate_json_with_gemini,
+    generate_with_gemini,
+)
 from .ollama import generate_with_ollama
+
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
 
+# Set this to true only if Ollama is actually installed and running.
+OLLAMA_FALLBACK = (
+    os.getenv("OLLAMA_FALLBACK", "false").strip().lower()
+    in ("1", "true", "yes", "on")
+)
 
-def generate(system: str, user: str, max_tokens: int = 1200, temperature: float = 0.4) -> str:
+
+def _ollama():
+    """Call Ollama only when it has explicitly been enabled."""
+    return generate_with_ollama
+
+
+def generate(
+    system: str,
+    user: str,
+    max_tokens: int = 1200,
+    temperature: float = 0.4,
+) -> str:
+
     if LLM_PROVIDER == "gemini":
+
         try:
-            return generate_with_gemini(system, user, max_tokens, temperature)
+            return generate_with_gemini(
+                system,
+                user,
+                max_tokens,
+                temperature,
+            )
+
         except Exception as e:
-            print(f"[llm/provider] Gemini failed ({e}); falling back to Ollama.")
-            return generate_with_ollama(system, user, max_tokens, temperature)
-    return generate_with_ollama(system, user, max_tokens, temperature)
+
+            # Do not hide Gemini quota/API errors behind an
+            # unrelated Ollama connection error.
+            if not OLLAMA_FALLBACK:
+                raise RuntimeError(
+                    f"Gemini request failed: {e}\n\n"
+                    "Ollama fallback is disabled."
+                ) from e
+
+            print(
+                f"[llm/provider] Gemini failed ({e}); "
+                "falling back to Ollama."
+            )
+
+            return _ollama()(
+                system,
+                user,
+                max_tokens,
+                temperature,
+            )
+
+    if LLM_PROVIDER == "ollama":
+
+        return generate_with_ollama(
+            system,
+            user,
+            max_tokens,
+            temperature,
+        )
+
+    raise ValueError(
+        f"Unknown LLM_PROVIDER: {LLM_PROVIDER}. "
+        "Use 'gemini' or 'ollama'."
+    )
 
 
-def generate_json(system: str, user: str, max_tokens: int = 1200, temperature: float = 0.2) -> str:
-    """Same fallback behaviour, but uses Gemini's native JSON mode when
-    Gemini is the active provider (see gemini.generate_json_with_gemini)."""
+def generate_json(
+    system: str,
+    user: str,
+    max_tokens: int = 1200,
+    temperature: float = 0.2,
+    response_schema=None,
+) -> str:
+
     if LLM_PROVIDER == "gemini":
+
         try:
-            return generate_json_with_gemini(system, user, max_tokens, temperature)
+            return generate_json_with_gemini(
+                system,
+                user,
+                max_tokens,
+                temperature,
+                response_schema=response_schema,
+            )
+
         except Exception as e:
-            print(f"[llm/provider] Gemini JSON call failed ({e}); falling back to Ollama.")
-            return generate_with_ollama(system, user, max_tokens, temperature)
-    return generate_with_ollama(system, user, max_tokens, temperature)
+
+            if not OLLAMA_FALLBACK:
+                raise RuntimeError(
+                    f"Gemini JSON request failed: {e}\n\n"
+                    "Ollama fallback is disabled."
+                ) from e
+
+            print(
+                f"[llm/provider] Gemini JSON call failed ({e}); "
+                "falling back to Ollama."
+            )
+
+            return generate_with_ollama(
+                system,
+                user,
+                max_tokens,
+                temperature,
+            )
+
+    if LLM_PROVIDER == "ollama":
+
+        return generate_with_ollama(
+            system,
+            user,
+            max_tokens,
+            temperature,
+        )
+
+    raise ValueError(
+        f"Unknown LLM_PROVIDER: {LLM_PROVIDER}. "
+        "Use 'gemini' or 'ollama'."
+    )
