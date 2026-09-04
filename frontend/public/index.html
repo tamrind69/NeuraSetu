@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>AI Teacher</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { --accent:#2864c8; --bg:#f4f6fb; --ink:#1f2430; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:0; background:var(--bg); color:var(--ink); }
+  header { background:var(--accent); color:#fff; padding:18px 24px; }
+  header h1 { margin:0; font-size:22px; }
+  .layout { display:grid; grid-template-columns: 340px 1fr; gap:20px; padding:20px; max-width:1200px; margin:0 auto; }
+  .card { background:#fff; border-radius:12px; padding:18px; box-shadow:0 1px 4px rgba(0,0,0,.08); margin-bottom:16px; }
+  label { display:block; font-size:13px; font-weight:600; margin:10px 0 4px; }
+  input, select, textarea { width:100%; padding:8px 10px; border:1px solid #d7dbe5; border-radius:8px; font-size:14px; }
+  textarea { min-height:70px; }
+  button { background:var(--accent); color:#fff; border:none; padding:10px 16px; border-radius:8px; cursor:pointer; font-weight:600; margin-top:10px; }
+  button.secondary { background:#e7ebf5; color:var(--ink); }
+  button:hover { opacity:.9; }
+  #chat { min-height:300px; max-height:520px; overflow-y:auto; }
+  .msg { padding:10px 14px; border-radius:10px; margin-bottom:10px; max-width:85%; white-space:pre-wrap; }
+  .msg.teacher { background:#eef2fb; }
+  .msg.student { background:var(--accent); color:#fff; margin-left:auto; }
+  .sections li { margin-bottom:6px; }
+  video { width:100%; border-radius:10px; margin-top:10px; }
+  .pill { display:inline-block; background:#eef2fb; border-radius:20px; padding:3px 10px; font-size:12px; margin:2px; }
+  .weak { background:#fde6e6; }
+  .strong { background:#e3f6e6; }
+  small.hint { color:#6b7280; }
+</style>
+</head>
+<body>
+<header><h1>🎓 AI Teacher — Human-Like AI Educator</h1></header>
+<div class="layout">
+  <div>
+    <div class="card">
+      <h3>1. Upload material (optional)</h3>
+      <input type="file" id="fileInput" accept=".pdf,.docx,.pptx,.txt" />
+      <button onclick="uploadFile()">Upload &amp; Index</button>
+      <div id="uploadStatus"><small class="hint">No material uploaded — will teach from general knowledge.</small></div>
+    </div>
+
+    <div class="card">
+      <h3>2. Lesson setup</h3>
+      <label>Topic</label>
+      <input id="topic" value="Ohm's Law" />
+      <label>Student level</label>
+      <select id="level"><option>beginner</option><option>intermediate</option><option>advanced</option></select>
+      <label>Language</label>
+      <select id="language"><option>English</option><option>Hindi</option><option>Hinglish</option></select>
+      <label>Time available (minutes)</label>
+      <input id="minutes" type="number" value="20" />
+      <button onclick="planLesson()">Plan Lesson</button>
+      <button class="secondary" onclick="generateVideo()">🎥 Generate Teaching Video</button>
+    </div>
+
+    <div class="card">
+      <h3>Learner Report</h3>
+      <div id="report"><small class="hint">Answer a few questions to build your report.</small></div>
+      <button class="secondary" onclick="loadReport()">Refresh Report</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h3>Lesson Plan</h3>
+      <div id="lessonPlan"><small class="hint">Plan a lesson to see the structured sections here.</small></div>
+    </div>
+
+    <div class="card">
+      <h3>Teach Me / Ask a Question</h3>
+      <div id="chat"></div>
+      <textarea id="questionBox" placeholder="Ask about the topic, or answer the teacher's last question..."></textarea>
+      <button onclick="askQuestion()">Ask / Explain</button>
+      <button class="secondary" onclick="submitAnswer()">Submit as Answer (for grading)</button>
+    </div>
+
+    <div class="card" id="videoCard" style="display:none;">
+      <h3>AI Teaching Video</h3>
+      <video id="videoPlayer" controls></video>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "";
+let sessionId = null;
+let currentConcept = "";
+let currentQuestion = "";
+
+function addMsg(role, text) {
+  const chat = document.getElementById("chat");
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function uploadFile() {
+  const file = document.getElementById("fileInput").files[0];
+  if (!file) return alert("Choose a file first");
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${API}/upload`, { method: "POST", body: fd });
+  const data = await res.json();
+  sessionId = data.session_id;
+  document.getElementById("uploadStatus").innerHTML =
+    `<small class="hint">Indexed <b>${data.chunks_indexed}</b> chunks from <b>${data.filename}</b>.</small>`;
+}
+
+function currentParams() {
+  return {
+    topic: document.getElementById("topic").value,
+    level: document.getElementById("level").value,
+    language: document.getElementById("language").value,
+    time_minutes: parseInt(document.getElementById("minutes").value || "20", 10),
+  };
+}
+
+async function planLesson() {
+  const p = currentParams();
+  const res = await fetch(`${API}/lesson/plan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...p, session_id: sessionId, student_id: "demo_student" }),
+  });
+  const plan = await res.json();
+  currentConcept = plan.sections?.[0]?.concept || p.topic;
+  const html = `<b>${plan.lesson_title}</b> (${plan.duration} min)<ul class="sections">` +
+    plan.sections.map(s => `<li>🕐 ${s.duration}min — <b>${s.title}</b> <small class="hint">(${s.concept})</small></li>`).join("") +
+    `</ul>`;
+  document.getElementById("lessonPlan").innerHTML = html;
+  addMsg("teacher", `Let's begin: ${plan.lesson_title}. I'll teach ${plan.sections[0].title} first.`);
+}
+
+async function askQuestion() {
+  const p = currentParams();
+  const q = document.getElementById("questionBox").value.trim();
+  if (q) addMsg("student", q);
+  const res = await fetch(`${API}/lesson/explain`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_id: sessionId, topic: p.topic, concept: currentConcept || p.topic,
+      level: p.level, language: p.language, time_minutes: Math.min(p.time_minutes, 5),
+      student_question: q || null,
+    }),
+  });
+  const data = await res.json();
+  addMsg("teacher", data.explanation + (data.sources.length ? `\n\n📎 Sources: ${data.sources.join(", ")}` : ""));
+  const match = data.explanation.match(/([^.?!]*\?)\s*$/);
+  currentQuestion = match ? match[1].trim() : "";
+  document.getElementById("questionBox").value = "";
+}
+
+async function submitAnswer() {
+  const answer = document.getElementById("questionBox").value.trim();
+  if (!answer) return alert("Type your answer first");
+  addMsg("student", answer);
+  const res = await fetch(`${API}/assess/answer`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      student_id: "demo_student",
+      concept: currentConcept || document.getElementById("topic").value,
+      expected_understanding: `Correct understanding of ${currentConcept}`,
+      question: currentQuestion || `About ${currentConcept}`,
+      student_answer: answer,
+    }),
+  });
+  const data = await res.json();
+  addMsg("teacher", `${data.evaluation.correct ? "✅ Correct!" : "❌ Not quite."} ${data.adaptive_decision.message_to_student}`);
+  document.getElementById("questionBox").value = "";
+  loadReport();
+}
+
+async function generateVideo() {
+  const p = currentParams();
+  document.getElementById("videoCard").style.display = "block";
+  addMsg("teacher", "🎬 Generating your teaching video... this can take a minute.");
+  const res = await fetch(`${API}/video/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId || "demo", topic: p.topic, level: p.level, language: p.language, time_minutes: Math.min(p.time_minutes, 6), subject: "physics" }),
+  });
+  const data = await res.json();
+  document.getElementById("videoPlayer").src = data.video_url;
+  addMsg("teacher", `🎬 Video ready: ${data.lesson_title}`);
+}
+
+async function loadReport() {
+  const res = await fetch(`${API}/report/demo_student`);
+  const r = await res.json();
+  document.getElementById("report").innerHTML = `
+    <div><b>Topic:</b> ${r.topic || "-"}</div>
+    <div><b>Score:</b> ${r.score_percent}%</div>
+    <div><b>Strong:</b> ${(r.strong_areas || []).map(c => `<span class="pill strong">${c}</span>`).join(" ") || "-"}</div>
+    <div><b>Needs work:</b> ${(r.needs_improvement || []).map(c => `<span class="pill weak">${c}</span>`).join(" ") || "-"}</div>
+    <div><small class="hint">${r.recommendation || ""}</small></div>
+  `;
+}
+</script>
+</body>
+</html>
