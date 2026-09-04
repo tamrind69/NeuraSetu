@@ -1,0 +1,18 @@
+export type FlowStep =
+  | 'dashboard'
+  | 'create'
+  | 'upload-topic'
+  | 'personalization'
+  | 'lesson-plan'
+  | 'classroom'
+  | 'interactive-question'
+  | 'adaptive-feedback'
+  | 'assessment'
+  | 'report'
+  | 'progress'
+  | 'tests'
+  | 'test-taking'
+  | 'test-result'
+  | 'assignments'
+  | 'assignment-details'
+  | 'assignment-submit';
