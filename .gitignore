@@ -1,0 +1,65 @@
+# ===========================
+# Python
+# ===========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.Python
+
+# ===========================
+# Virtual environments
+# ===========================
+.venv/
+venv/
+env/
+ENV/
+
+# ===========================
+# NeuraSetu RAG artifacts
+# (generated at runtime — do NOT commit)
+# ===========================
+
+# ChromaDB persistent vector store
+chroma_db/
+
+# LocalFileStore parent document cache
+doc_store/
+
+# BM25 sparse index pickle
+bm25_index.pkl
+
+# ===========================
+# HuggingFace model cache
+# ===========================
+.cache/
+~/.cache/huggingface/
+
+# ===========================
+# Environment / secrets
+# ===========================
+.env
+.env.*
+*.env
+!.env.example
+
+# ===========================
+# IDE / OS
+# ===========================
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ===========================
+# Logs
+# ===========================
+*.log
+logs/
