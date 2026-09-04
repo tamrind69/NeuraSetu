@@ -1,65 +1,37 @@
-# ===========================
-# Python
-# ===========================
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.egg-info/
-dist/
-build/
-.eggs/
-*.egg
-.Python
-
-# ===========================
 # Virtual environments
-# ===========================
-.venv/
 venv/
 env/
-ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
 
-# ===========================
-# NeuraSetu RAG artifacts
-# (generated at runtime — do NOT commit)
-# ===========================
-
-# ChromaDB persistent vector store
-chroma_db/
-
-# LocalFileStore parent document cache
-doc_store/
-
-# BM25 sparse index pickle
-bm25_index.pkl
-
-# ===========================
-# HuggingFace model cache
-# ===========================
-.cache/
-~/.cache/huggingface/
-
-# ===========================
-# Environment / secrets
-# ===========================
+# Environment variables
 .env
-.env.*
-*.env
-!.env.example
+.env.local
 
-# ===========================
-# IDE / OS
-# ===========================
-.idea/
-.vscode/
+# Data and uploads
+data/uploads/
+data/videos/
+*.db
+
+# Dependencies (if included locally)
+node_modules/
+
+# OS
 .DS_Store
-Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# IDE
+.vscode/
+.idea/
 *.swp
 *.swo
 
-# ===========================
-# Logs
-# ===========================
-*.log
-logs/
+# Large files
+*.zip
+*.tar.gz
