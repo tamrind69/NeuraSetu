@@ -1,21 +1,8 @@
 """
 ai_teacher/llm_client.py
 
-Single place every module (planner, evaluator, misconception
-detector, visual selector) calls to talk to "the LLM" -
-`chat()` / `chat_json()`. Nothing else in the codebase changed when
-Gemini was added: this file now just delegates to
-ai_teacher/llm/provider.py, which picks Gemini or Ollama (with
-automatic fallback) based on the LLM_PROVIDER env var.
-
-    ai_teacher/planner.py  ---
-    assessment/evaluator.py  ---
-    assessment/quiz.py         ---> chat()/chat_json() (this file) ---> ai_teacher/llm/provider.py ---> Gemini | Ollama
-    video/visual_selector.py ---
-    backend/main.py          ---
-
-See ai_teacher/llm/gemini.py and ai_teacher/llm/ollama.py for the
-actual provider implementations.
+Updated to increase default token ceilings and improve robustness 
+against truncated JSON payloads from cloud LLM providers.
 """
 from __future__ import annotations
 
@@ -29,7 +16,7 @@ from ai_teacher.llm.provider import generate, generate_json
 def chat(
     system: str,
     user: str,
-    max_tokens: int = 1200,
+    max_tokens: int = 2000,
     temperature: float = 0.4
 ) -> str:
     """Plain text completion."""
@@ -44,7 +31,7 @@ def chat(
 def chat_json(
     system: str,
     user: str,
-    max_tokens: int = 1200,
+    max_tokens: int = 2000,
     temperature: float = 0.2,
     response_schema=None,
 ) -> Any:
@@ -56,6 +43,7 @@ Do NOT explain your answer.
 Do NOT include markdown.
 Do NOT include ```json or ``` fences.
 Do NOT write anything before or after the JSON.
+Ensure your response is complete and not truncated.
 """
 
     raw = generate_json(
@@ -107,8 +95,8 @@ Do NOT write anything before or after the JSON.
         retry_user = user + """
 
 CRITICAL CORRECTION:
-Your previous response was invalid.
-Return ONLY valid JSON.
+Your previous response was invalid or cut off.
+Return ONLY complete, valid JSON matching the required schema.
 The response must begin with { or [ and end with } or ].
 There must be absolutely NO text outside the JSON.
 """

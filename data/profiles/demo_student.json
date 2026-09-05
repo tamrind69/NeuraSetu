@@ -1,0 +1,20 @@
+{
+  "student_id": "demo_student",
+  "level": "beginner",
+  "language": "English",
+  "topic": "photosynthesis",
+  "concepts": {},
+  "recent_scores": [],
+  "current_difficulty": 2,
+  "history": [
+    "string",
+    "Ohm's Law",
+    "Ohm's Law",
+    "Photosynthesis",
+    "Photosynthesis",
+    "Ohm's Law",
+    "phtotosynthesis",
+    "Ohm's Law",
+    "photosynthesis"
+  ]
+}

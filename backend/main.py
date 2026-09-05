@@ -1,20 +1,7 @@
 """
 backend/main.py
 
-FastAPI app tying the whole architecture together:
-
-    frontend
-       |
-       v
-    backend/main.py  --- rag/ (ingest + retrieve)
-       |                 ai_teacher/ (plan + explain + personalize)
-       |                 assessment/ (evaluate + adapt + quiz)
-       |                 video/ (tts + avatar + visuals -> mp4)
-       v
-    student
-
-Run with:
-    uvicorn backend.main:app --reload --port 8000
+FastAPI app tying the whole architecture together with D-ID video integration:
 """
 
 from __future__ import annotations
@@ -71,6 +58,12 @@ from rag.retrieval import (
     LessonRetrievalRequest,
     retrieve_lesson_context,
 )
+
+# ---------------------------------------------------------------------------
+# D-ID Video Client
+# ---------------------------------------------------------------------------
+
+from video.did_client import create_did_talk, poll_did_talk_status
 
 
 # ---------------------------------------------------------------------------
@@ -341,12 +334,6 @@ def explain_concept(req: ExplainRequest):
         prompt,
     )
 
-    # The old VectorStore retrieval has been removed.
-    #
-    # The project now uses the new:
-    #     ChromaDB + BM25 + parent retrieval
-    #
-    # Therefore, don't reference the old VectorStore class here.
     sources = []
 
     return ExplainResponse(
@@ -422,22 +409,13 @@ def get_report(student_id: str):
 
 
 # ===========================================================================
-# 9. AI Teaching Video
-# Lesson plan -> scenes -> TTS + avatar + visuals -> mp4
+# 9. D-ID AI Teaching Video Generation Endpoint
 # ===========================================================================
 
 @app.post("/video/generate")
 def generate_video(req: VideoRequest):
 
-    from video.video_generator import (
-        build_lesson_video,
-        scenes_from_lesson_plan,
-    )
-
-    # ---------------------------------------------------------------
     # 1. Retrieve RAG context
-    # ---------------------------------------------------------------
-
     context = _retrieve_context(
         req.session_id,
         req.topic,
@@ -447,10 +425,7 @@ def generate_video(req: VideoRequest):
         subject_name=req.subject,
     )
 
-    # ---------------------------------------------------------------
-    # 2. Generate lesson plan
-    # ---------------------------------------------------------------
-
+    # 2. Generate lesson plan using Gemini
     plan = plan_lesson(
         topic=req.topic,
         level=req.level,
@@ -459,88 +434,25 @@ def generate_video(req: VideoRequest):
         context=context,
     )
 
-    # ---------------------------------------------------------------
-    # 3. Generate explanations for each section
-    # ---------------------------------------------------------------
+    # 3. Extract concept text from sections to build the unified script
+    full_script = " ".join([section.get("concept", "") for section in plan.get("sections", [])])
+    
+    # Ensure it fits within free tier limits (~400 words / ~3 minutes)
+    if len(full_script.split()) > 400:
+        full_script = " ".join(full_script.split()[:400])
 
-    explanations = {}
+    # 4. Submit script to D-ID API
+    talk_id = create_did_talk(script_text=full_script)
 
-    for section in plan["sections"]:
+    # 5. Poll D-ID until the video generation is completed
+    video_url = poll_did_talk_status(talk_id)
 
-        prompt = explain_concept_prompt(
-            topic=req.topic,
-            level=req.level,
-            language=req.language,
-            time_minutes=max(
-                1,
-                section.get("duration", 2),
-            ),
-            context=context,
-            student_question=(
-                f"Explain the '{section['title']}' "
-                f"part of {req.topic}."
-            ),
-        )
-
-        explanations[section["title"]] = chat(
-            TEACHER_SYSTEM,
-            prompt,
-            max_tokens=400,
-        )
-
-    # ---------------------------------------------------------------
-    # 4. Convert lesson plan into video scenes
-    # ---------------------------------------------------------------
-
-    scenes = scenes_from_lesson_plan(
-        plan,
-        subject=req.subject,
-        explanations=explanations,
-    )
-
-    # ---------------------------------------------------------------
-    # 5. Generate the actual video
-    # ---------------------------------------------------------------
-
-    video_path = build_lesson_video(
-        req.session_id or uuid.uuid4().hex[:8],
-        scenes,
-        language=req.language,
-    )
-
-    # ---------------------------------------------------------------
-    # 6. Return video information
-    # ---------------------------------------------------------------
-
+    # 6. Return response matching expected schema/frontend handling
     return {
         "lesson_title": plan["lesson_title"],
-        "video_path": video_path,
-        "video_url": f"/video/file/{os.path.basename(video_path)}",
+        "video_path": None,  # Hosted remotely on D-ID CDN
+        "video_url": video_url,
     }
-
-
-# ===========================================================================
-# Video file serving
-# ===========================================================================
-
-@app.get("/video/file/{filename}")
-def get_video_file(filename: str):
-
-    path = os.path.join(
-        VIDEO_OUTPUT_DIR,
-        filename,
-    )
-
-    if not os.path.exists(path):
-        raise HTTPException(
-            status_code=404,
-            detail="Video not found",
-        )
-
-    return FileResponse(
-        path,
-        media_type="video/mp4",
-    )
 
 
 # ===========================================================================
