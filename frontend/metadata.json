@@ -1,0 +1,6 @@
+{
+  "name": "AI Teacher",
+  "description": "Interactive AI Teacher platform with personalized lesson generation, intelligent classroom delivery, adaptive feedback, and comprehensive learning analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
