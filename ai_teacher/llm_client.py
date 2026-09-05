@@ -3,20 +3,14 @@ ai_teacher/llm_client.py
 
 Single place every module (planner, evaluator, misconception
 detector, visual selector) calls to talk to "the LLM" -
-`chat()` / `chat_json()`. Nothing else in the codebase changed when
-Gemini was added: this file now just delegates to
-ai_teacher/llm/provider.py, which picks Gemini or Ollama (with
-automatic fallback) based on the LLM_PROVIDER env var.
+chat() / chat_json().
 
-    ai_teacher/planner.py  ---
-    assessment/evaluator.py  ---
-    assessment/quiz.py         ---> chat()/chat_json() (this file) ---> ai_teacher/llm/provider.py ---> Gemini | Ollama
-    video/visual_selector.py ---
-    backend/main.py          ---
+Delegates to:
+    ai_teacher/llm/provider.py
 
-See ai_teacher/llm/gemini.py and ai_teacher/llm/ollama.py for the
-actual provider implementations.
+which selects Gemini or Ollama based on LLM_PROVIDER.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,14 +24,199 @@ def chat(
     system: str,
     user: str,
     max_tokens: int = 1200,
-    temperature: float = 0.4
+    temperature: float = 0.4,
 ) -> str:
     """Plain text completion."""
+
     return generate(
         system,
         user,
         max_tokens=max_tokens,
-        temperature=temperature
+        temperature=temperature,
+    )
+
+
+def _clean_json_text(text: str) -> str:
+    """
+    Remove common formatting around JSON.
+
+    Handles:
+        ```json
+        {...}
+        ```
+
+    and accidental whitespace.
+    """
+
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    # Remove markdown code fences.
+    text = re.sub(
+        r"^```(?:json|JSON)?\s*",
+        "",
+        text,
+    )
+
+    text = re.sub(
+        r"\s*```$",
+        "",
+        text,
+    )
+
+    return text.strip()
+
+
+def _extract_json(text: str) -> str | None:
+    """
+    Find the first complete JSON object or array in arbitrary text.
+
+    Unlike the old implementation, this understands nested
+    dictionaries/lists and strings containing braces.
+
+    Example:
+
+        Some explanation...
+        [{"a": 1}, {"b": 2}]
+        More text...
+
+    returns:
+
+        [{"a": 1}, {"b": 2}]
+    """
+
+    text = _clean_json_text(text)
+
+    if not text:
+        return None
+
+    # First, see if the entire response is already valid JSON.
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        pass
+
+    # Look for either an object or array.
+    start_positions = []
+
+    object_start = text.find("{")
+    array_start = text.find("[")
+
+    if object_start != -1:
+        start_positions.append(object_start)
+
+    if array_start != -1:
+        start_positions.append(array_start)
+
+    if not start_positions:
+        return None
+
+    # Start at whichever JSON-looking character occurs first.
+    start = min(start_positions)
+
+    stack: list[str] = []
+
+    in_string = False
+    escape = False
+
+    opening = text[start]
+
+    if opening == "{":
+        stack.append("}")
+    elif opening == "[":
+        stack.append("]")
+    else:
+        return None
+
+    for i in range(start + 1, len(text)):
+
+        char = text[i]
+
+        # Handle escaped characters inside JSON strings.
+        if in_string:
+
+            if escape:
+                escape = False
+                continue
+
+            if char == "\\":
+                escape = True
+                continue
+
+            if char == '"':
+                in_string = False
+
+            continue
+
+        # Enter string.
+        if char == '"':
+            in_string = True
+            continue
+
+        # Opening brackets.
+        if char == "{":
+            stack.append("}")
+
+        elif char == "[":
+            stack.append("]")
+
+        # Closing brackets.
+        elif char == "}" or char == "]":
+
+            if not stack:
+                return None
+
+            expected = stack[-1]
+
+            if char != expected:
+                # Malformed JSON.
+                return None
+
+            stack.pop()
+
+            # Entire JSON structure is complete.
+            if not stack:
+                return text[start:i + 1]
+
+    # JSON was probably truncated.
+    return None
+
+
+def _parse_json(text: str) -> Any:
+    """
+    Parse JSON robustly.
+
+    Raises JSONDecodeError if valid JSON cannot be extracted.
+    """
+
+    cleaned = _clean_json_text(text)
+
+    # Attempt 1:
+    # Entire response is JSON.
+    try:
+        return json.loads(cleaned)
+
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt 2:
+    # Extract JSON embedded in surrounding text.
+    candidate = _extract_json(cleaned)
+
+    if candidate is not None:
+        try:
+            return json.loads(candidate)
+
+        except json.JSONDecodeError:
+            pass
+
+    raise json.JSONDecodeError(
+        "Model response did not contain valid complete JSON",
+        cleaned,
+        0,
     )
 
 
@@ -48,15 +227,37 @@ def chat_json(
     temperature: float = 0.2,
     response_schema=None,
 ) -> Any:
+    """
+    Generate and parse JSON from the LLM.
+
+    Automatically retries once if the first response is invalid.
+
+    The retry is especially useful for:
+        - truncated JSON
+        - markdown-wrapped JSON
+        - extra explanation
+        - incomplete arrays
+    """
+
     system_with_instruction = system + """
 
-IMPORTANT:
-Return ONLY one valid JSON object or JSON array.
-Do NOT explain your answer.
-Do NOT include markdown.
-Do NOT include ```json or ``` fences.
-Do NOT write anything before or after the JSON.
+IMPORTANT JSON OUTPUT RULES:
+
+1. Return ONLY valid JSON.
+2. Do NOT write explanations.
+3. Do NOT use markdown.
+4. Do NOT use ```json fences.
+5. Do NOT write anything before the JSON.
+6. Do NOT write anything after the JSON.
+7. Make sure every { has a matching }.
+8. Make sure every [ has a matching ].
+9. Make sure every JSON string is closed with ".
+10. The response MUST be complete before you stop generating.
 """
+
+    # ---------------------------------------------------------
+    # FIRST ATTEMPT
+    # ---------------------------------------------------------
 
     raw = generate_json(
         system_with_instruction,
@@ -66,67 +267,74 @@ Do NOT write anything before or after the JSON.
         response_schema=response_schema,
     )
 
-    def parse_json(text: str) -> Any:
-        text = text.strip()
-
-        if text.startswith("```"):
-            text = re.sub(r"^```(?:json)?\s*", "", text)
-            text = re.sub(r"\s*```$", "", text)
-            text = text.strip()
-
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        start = text.find("{")
-        end = text.rfind("}")
-
-        if start != -1 and end != -1 and end > start:
-            candidate = text[start:end + 1]
-            return json.loads(candidate)
-
-        start = text.find("[")
-        end = text.rfind("]")
-
-        if start != -1 and end != -1 and end > start:
-            candidate = text[start:end + 1]
-            return json.loads(candidate)
-
-        raise json.JSONDecodeError(
-            "No valid JSON found",
-            text,
-            0,
-        )
-
     try:
-        return parse_json(raw)
+        return _parse_json(raw)
 
     except json.JSONDecodeError as first_error:
 
+        # -----------------------------------------------------
+        # RETRY
+        # -----------------------------------------------------
+
         retry_user = user + """
 
-CRITICAL CORRECTION:
-Your previous response was invalid.
-Return ONLY valid JSON.
-The response must begin with { or [ and end with } or ].
-There must be absolutely NO text outside the JSON.
+CRITICAL JSON CORRECTION:
+
+Your previous response was invalid or incomplete.
+
+Generate the COMPLETE answer again.
+
+Return ONLY the JSON.
+
+Do not explain anything.
+
+The JSON must:
+- start with { or [
+- end with } or ]
+- contain properly closed strings
+- contain properly closed arrays
+- contain properly closed objects
+- contain no text outside the JSON
+
+IMPORTANT:
+Do not stop in the middle of an array or object.
 """
+
+        # Give the retry more room.
+        retry_max_tokens = max(
+            max_tokens * 2,
+            2500,
+        )
 
         raw2 = generate_json(
             system_with_instruction,
             retry_user,
-            max_tokens=max_tokens,
+            max_tokens=retry_max_tokens,
             temperature=0.0,
             response_schema=response_schema,
         )
 
         try:
-            return parse_json(raw2)
+            return _parse_json(raw2)
 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as second_error:
+
+            # Print useful debugging information.
+            print("\n" + "=" * 70)
+            print("LLM JSON PARSING FAILED")
+            print("=" * 70)
+
+            print("\nFIRST RESPONSE:")
+            print(raw)
+
+            print("\nRETRY RESPONSE:")
+            print(raw2)
+
+            print("\n" + "=" * 70)
+
             raise ValueError(
-                f"Model did not return valid JSON.\n"
-                f"First response:\n{raw[:500]}\n\n"
-                f"Retry response:\n{raw2[:500]}"
-            ) from first_error
+                "Model did not return valid complete JSON.\n\n"
+                f"First response:\n{raw}\n\n"
+                f"Retry response:\n{raw2}"
+            ) from second_error
+

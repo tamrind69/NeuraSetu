@@ -32,7 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from ai_teacher.llm_client import chat
+from ai_teacher.llm_client import chat, chat_json
 from ai_teacher.personalization import learning_report, load_profile, save_profile
 from ai_teacher.planner import plan_lesson
 from ai_teacher.prompts import TEACHER_SYSTEM, explain_concept_prompt
@@ -456,40 +456,89 @@ def generate_video(req: VideoRequest):
         level=req.level,
         language=req.language,
         time_minutes=req.time_minutes,
+        goal="understand the fundamentals",
         context=context,
     )
 
     # ---------------------------------------------------------------
-    # 3. Generate explanations for each section
+    # 3. Generate explanations
+    #
+    # ONE Gemini call for the whole lesson, but asking for a
+    # distinct, section-specific explanation per section (returned
+    # as structured JSON) instead of one shared paragraph reused
+    # for every scene.
     # ---------------------------------------------------------------
 
-    explanations = {}
+    EXPLANATION_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "sections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "explanation": {"type": "string"},
+                    },
+                    "required": ["title", "explanation"],
+                },
+            }
+        },
+        "required": ["sections"],
+    }
+
+    explanation_prompt = explain_concept_prompt(
+        topic=req.topic,
+        level=req.level,
+        language=req.language,
+        time_minutes=req.time_minutes,
+        context=context,
+        student_question=(
+            f"For each of the following sections of a lesson on "
+            f"{req.topic}, write a distinct, section-specific "
+            f"explanation (1-2 sentences, no more than 40 words, "
+            f"self-contained, no references to 'as mentioned above' "
+            f"or other sections):\n\n"
+            + "\n".join(
+                f"- {section['title']}: {section['concept']}"
+                for section in plan["sections"]
+            )
+        ),
+    )
+
+    # Scale the token budget with lesson length so the JSON response
+    # doesn't get truncated mid-generation for lessons with more
+    # sections (a fixed budget only worked for very short plans).
+    num_sections = max(len(plan["sections"]), 1)
+    explanation_max_tokens = min(3000, 300 + (num_sections * 350))
+
+    explanation_result = chat_json(
+        TEACHER_SYSTEM,
+        explanation_prompt,
+        max_tokens=explanation_max_tokens,
+        response_schema=EXPLANATION_SCHEMA,
+    )
+
+    # ---------------------------------------------------------------
+    # 4. Map each section title to its own explanation.
+    #
+    # scenes_from_lesson_plan() expects explanations keyed by
+    # section title, so preserve that interface.
+    # ---------------------------------------------------------------
+
+    explanations = {
+        item["title"]: item["explanation"]
+        for item in explanation_result.get("sections", [])
+    }
 
     for section in plan["sections"]:
-
-        prompt = explain_concept_prompt(
-            topic=req.topic,
-            level=req.level,
-            language=req.language,
-            time_minutes=max(
-                1,
-                section.get("duration", 2),
-            ),
-            context=context,
-            student_question=(
-                f"Explain the '{section['title']}' "
-                f"part of {req.topic}."
-            ),
-        )
-
-        explanations[section["title"]] = chat(
-            TEACHER_SYSTEM,
-            prompt,
-            max_tokens=400,
+        explanations.setdefault(
+            section["title"],
+            f"Let's talk about {section['title']}.",
         )
 
     # ---------------------------------------------------------------
-    # 4. Convert lesson plan into video scenes
+    # 5. Convert lesson plan into video scenes
     # ---------------------------------------------------------------
 
     scenes = scenes_from_lesson_plan(
@@ -499,7 +548,7 @@ def generate_video(req: VideoRequest):
     )
 
     # ---------------------------------------------------------------
-    # 5. Generate the actual video
+    # 6. Generate the actual video
     # ---------------------------------------------------------------
 
     video_path = build_lesson_video(
@@ -509,7 +558,7 @@ def generate_video(req: VideoRequest):
     )
 
     # ---------------------------------------------------------------
-    # 6. Return video information
+    # 7. Return video information
     # ---------------------------------------------------------------
 
     return {
@@ -517,7 +566,6 @@ def generate_video(req: VideoRequest):
         "video_path": video_path,
         "video_url": f"/video/file/{os.path.basename(video_path)}",
     }
-
 
 # ===========================================================================
 # Video file serving

@@ -285,46 +285,35 @@ IMPORTANT OUTPUT RULES:
 """
 
 
-def visual_selector_prompt(
-    subject: str,
-    concept: str,
-    text_to_illustrate: str,
-) -> str:
+VISUAL_SELECTOR_BATCH_SYSTEM = VISUAL_SELECTOR_SYSTEM  # same rules, reused
+def visual_selector_batch_prompt(scenes: list[dict]) -> str:
+    scene_lines = "\n".join(
+        f'{{"scene_number": {s["scene_number"]}, "subject": "{s["subject"]}", '
+        f'"concept": "{s["concept"]}", "text": "{s["text"]}"}}'
+        for s in scenes
+    )
+    return f"""Choose the best visual representation for EACH of the
+following teaching scenes.
 
-    return f"""Choose the best visual representation for this teaching content.
+Scenes:
+[{scene_lines}]
 
-Return a JSON object with exactly this structure:
+Return a JSON ARRAY with exactly one object per scene, in the same
+order, each shaped like:
 
 {{
+  "scene_number": 1,
   "visual_type": "graph",
-  "reason": "string",
+  "reason": "under 10 words",
   "elements": ["string", "string"]
 }}
 
+Keep "reason" to under 10 words — a short label, not a full sentence.
+Keep "elements" to at most 4 short items.
+
 Allowed visual_type values:
-- "circuit_diagram"
-- "graph"
-- "equation"
-- "timeline"
-- "labeled_diagram"
-- "code"
-- "flow_diagram"
-- "plain_text"
-
-Subject:
-{subject}
-
-Concept:
-{concept}
-
-Text being taught right now:
-"{text_to_illustrate}"
-
-Rules:
-- Choose exactly one visual_type.
-- "reason" should briefly explain why that visual is useful.
-- "elements" should list the important elements that should appear.
-- Return ONLY valid JSON.
+"circuit_diagram", "graph", "equation", "timeline", "labeled_diagram",
+"code", "flow_diagram", "plain_text"
 """
 
 

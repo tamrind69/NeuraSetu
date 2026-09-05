@@ -19,7 +19,10 @@ import os
 import textwrap
 
 from ai_teacher.llm_client import chat_json
-from ai_teacher.prompts import VISUAL_SELECTOR_SYSTEM, visual_selector_prompt
+from ai_teacher.prompts import (
+    VISUAL_SELECTOR_BATCH_SYSTEM,
+    visual_selector_batch_prompt,
+)
 
 VISUAL_SCHEMA = {
     "type": "object",
@@ -54,24 +57,49 @@ VISUAL_SCHEMA = {
     ]
 }
 
+VISUAL_SCHEMA_BATCH = {
+    "type": "array",
+    "items": VISUAL_SCHEMA,
+}
+
 SLIDE_SIZE = (960, 540)
 BG = (255, 255, 255)
 INK = (30, 30, 40)
 ACCENT = (40, 100, 200)
 
 
-def select_visual(subject: str, concept: str, text_to_illustrate: str) -> dict:
-    prompt = visual_selector_prompt(subject, concept, text_to_illustrate)
-    result = chat_json(
-    VISUAL_SELECTOR_SYSTEM,
-    prompt,
-    max_tokens=800,
-    response_schema=VISUAL_SCHEMA
-)
-    result.setdefault("visual_type", "plain_text")
-    result.setdefault("elements", [])
-    result.setdefault("reason", "")
-    return result
+def select_visuals_batch(scenes: list) -> dict[int, dict]:
+    """One Gemini call for all scenes instead of one call per scene."""
+    payload = [
+        {"scene_number": s.scene_number, "subject": s.subject,
+         "concept": s.concept, "text": s.text}
+        for s in scenes
+    ]
+    prompt = visual_selector_batch_prompt(payload)
+
+    num_scenes = max(len(scenes), 1)
+    batch_max_tokens = min(4000, 200 + (num_scenes * 220))
+
+    results = chat_json(
+        VISUAL_SELECTOR_BATCH_SYSTEM,
+        prompt,
+        max_tokens=batch_max_tokens,
+        response_schema=VISUAL_SCHEMA_BATCH,
+    )
+
+    by_scene = {}
+    for r in results:
+        r.setdefault("visual_type", "plain_text")
+        r.setdefault("elements", [])
+        r.setdefault("reason", "")
+        by_scene[r.get("scene_number")] = r
+
+    for s in scenes:
+        by_scene.setdefault(
+            s.scene_number,
+            {"visual_type": "plain_text", "elements": [], "reason": ""},
+        )
+    return by_scene
 
 
 def _text_card(title: str, body: str, out_path: str) -> str:

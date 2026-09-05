@@ -29,7 +29,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from video import tts
 from video.avatar import make_avatar_frames
-from video.visual_selector import select_visual, render_visual
+from video.visual_selector import select_visuals_batch, render_visual
 
 VIDEO_OUTPUT_DIR = os.getenv("VIDEO_OUTPUT_DIR", "./data/videos")
 CANVAS_SIZE = (1280, 720)
@@ -127,6 +127,13 @@ def build_lesson_video(
     work_dir = os.path.join(VIDEO_OUTPUT_DIR, "_work", session_id)
     os.makedirs(work_dir, exist_ok=True)
 
+    # ---------------------------------------------------------------
+    # One batched Gemini call for ALL scenes' visuals, instead of one
+    # call per scene. Keeps /video/generate at a flat, small number of
+    # LLM calls regardless of how many scenes the lesson has.
+    # ---------------------------------------------------------------
+    visuals_by_scene = select_visuals_batch(scenes)
+
     clips = []
     for scene in scenes:
         audio_path = os.path.join(work_dir, f"scene_{scene.scene_number}.mp3")
@@ -136,7 +143,7 @@ def build_lesson_video(
 
         duration = AudioFileClip(audio_path).duration
 
-        visual = select_visual(scene.subject, scene.concept, scene.text)
+        visual = visuals_by_scene[scene.scene_number]
         visual_path = os.path.join(work_dir, f"visual_{scene.scene_number}.png")
         render_visual(visual, title=scene.concept, fallback_text=scene.text, out_path=visual_path)
 
